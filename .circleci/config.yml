@@ -4,21 +4,72 @@ orbs:
   docker: circleci/docker@0.5.20
 
 jobs:
-  build-and-push:
+  build-and-test:
     executor: docker/docker
     steps:
       - setup_remote_docker
       - checkout
       - docker/check
       - docker/build:
-          image: $CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME
-      - docker/push:
-          digest-path: /tmp/digest.txt
-          image: $CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAM
+          image: ${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}
       - run:
+          name: Install dockle
           command: |
-            echo "Digest is: $(</tmp/digest.txt)"
+             VERSION=$(
+               curl --silent "https://api.github.com/repos/goodwithtech/dockle/releases/latest" | \
+               grep '"tag_name":' | \
+               sed -E 's/.*"v([^"]+)".*/\1/'
+             )
+             wget https://github.com/goodwithtech/dockle/releases/download/v${VERSION}/dockle_${VERSION}_Linux-64bit.tar.gz
+             tar zxvf dockle_${VERSION}_Linux-64bit.tar.gz
+             sudo mv dockle /usr/local/bin
+      - run:
+          name: Scan the image with dockle
+          command: dockle --exit-code 1 ${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}:${CIRCLE_SHA1}
+      - run:
+          name: Install trivy
+          command: |
+            VERSION=$(
+                curl --silent "https://api.github.com/repos/aquasecurity/trivy/releases/latest" | \
+                grep '"tag_name":' | \
+                sed -E 's/.*"v([^"]+)".*/\1/'
+            )
+            wget https://github.com/aquasecurity/trivy/releases/download/v${VERSION}/trivy_${VERSION}_Linux-64bit.tar.gz
+            tar zxvf trivy_${VERSION}_Linux-64bit.tar.gz
+            sudo mv trivy /usr/local/bin
+      - run:
+          name: Scan the image with trivy
+          command: trivy --exit-code 0 --no-progress ${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}:${CIRCLE_SHA1}
+
 workflows:
-  commit:
+  build-and-deploy:
     jobs:
-      - build-and-push
+      - build-and-test
+      # When you merge to master, docker push with latest tag.
+      - docker/publish:
+          image: ${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}
+          tag: 'latest'
+          requires:
+            - build-and-test
+          filters:
+            branches:
+              only: master
+  deploy-tags:
+    # Triggerd only when a git tag created
+    jobs:
+      - build-and-test:
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /^v.*/
+      - docker/publish:
+          image: ${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}
+          tag: ${CIRCLE_TAG}
+          requires:
+            - build-and-test
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /^v.*/
