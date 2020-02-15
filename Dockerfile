@@ -5,7 +5,7 @@ COPY . .
 RUN go get -d -v ./...
 RUN CGO_ENABLED=0 go build -o web .
 
-FROM busybox:1.31.1
+FROM alpine:3.11.3
 RUN adduser -D web
 USER web
 WORKDIR /app
